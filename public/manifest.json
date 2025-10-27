@@ -1,0 +1,43 @@
+{
+  "name": "Food Truck Live",
+  "short_name": "Food Truck",
+  "description": "Discover and track food trucks in your area with real-time locations and reviews",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#16a34a",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["food", "lifestyle", "navigation"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Find Trucks",
+      "short_name": "Find",
+      "description": "Find food trucks near you",
+      "url": "/",
+      "icons": [{ "src": "/logo.svg", "sizes": "192x192", "type": "image/svg+xml" }]
+    }
+  ]
+}
