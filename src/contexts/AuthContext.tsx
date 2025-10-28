@@ -1,30 +1,40 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
+import React, { createContext, useContext, useEffect, useState, ReactNode, useMemo } from 'react';
+import { User as SupabaseUser, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { checkRateLimit, logSecurityEvent, resetRateLimit, validateEmail, isStrongPassword } from '../utils/security';
+import { signInWithGoogle as firebaseGoogleSignIn, signOut as firebaseSignOut, onAuthStateChangedListener } from '../lib/firebase';
+import { User as FirebaseUser } from 'firebase/auth';
+import { checkRateLimit, logSecurityEvent, resetRateLimit, validateEmail } from '../utils/security';
 import type { Database } from '../lib/database.types';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 
+type AppUser = (SupabaseUser | (FirebaseUser & { id?: string })) & {
+  user_metadata?: {
+    full_name?: string;
+    avatar_url?: string;
+  };
+};
+
 interface AuthContextType {
-  user: User | null;
+  user: AppUser | null;
   profile: Profile | null;
   session: Session | null;
   loading: boolean;
   signUp: (email: string, password: string, fullName: string, role: 'customer' | 'food_truck_owner') => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
-  signOut: () => Promise<void>;
+  signInWithGoogle: (useFirebase?: boolean) => Promise<void>;
+  signOut: (useFirebase?: boolean) => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isFirebaseUser, setIsFirebaseUser] = useState(false);
 
   const fetchProfile = async (userId: string) => {
     const { data, error } = await supabase
@@ -35,52 +45,77 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!error && data) {
       setProfile(data);
-    }
+      
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser?.user_metadata?.avatar_url && !data.profile_image_url) {
+        await supabase
+          .from('profiles')
+          .update({ profile_image_url: currentUser.user_metadata.avatar_url })
+          .eq('id', userId);
 
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
-    if (currentUser?.user_metadata?.avatar_url && data && !data.profile_image_url) {
-      await supabase
-        .from('profiles')
-        .update({ profile_image_url: currentUser.user_metadata.avatar_url })
-        .eq('id', userId);
-
-      if (data) {
         setProfile({ ...data, profile_image_url: currentUser.user_metadata.avatar_url });
       }
     }
   };
 
   const refreshProfile = async () => {
-    if (user) {
+    if (user && user.id) {
       await fetchProfile(user.id);
     }
   };
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id).finally(() => setLoading(false));
-      } else {
+    // Set up Supabase auth listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session) {
+        setSession(session);
+        setUser(session.user);
+        setIsFirebaseUser(false);
+        await fetchProfile(session.user.id);
+      }
+      if (!isFirebaseUser) {
         setLoading(false);
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      (async () => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchProfile(session.user.id);
-        } else {
-          setProfile(null);
-        }
+    // Set up Firebase auth listener
+    const unsubscribeFirebase = onAuthStateChangedListener((firebaseUser) => {
+      if (firebaseUser) {
+        setUser({
+          ...firebaseUser,
+          id: firebaseUser.uid,
+          email: firebaseUser.email,
+          user_metadata: {
+            full_name: firebaseUser.displayName,
+            avatar_url: firebaseUser.photoURL
+          }
+        });
+        setIsFirebaseUser(true);
+        setSession(null);
+        // For Firebase users, we'll fetch the profile using the UID
+        fetchProfile(firebaseUser.uid).finally(() => setLoading(false));
+      } else if (!session) {
         setLoading(false);
-      })();
+      }
     });
 
-    return () => subscription.unsubscribe();
+    // Initial session check
+    const initAuth = async () => {
+      const { data: { session: supabaseSession } } = await supabase.auth.getSession();
+      if (supabaseSession) {
+        setSession(supabaseSession);
+        setUser(supabaseSession.user);
+        await fetchProfile(supabaseSession.user.id);
+      }
+      setLoading(false);
+    };
+
+    initAuth();
+
+    return () => {
+      subscription.unsubscribe();
+      unsubscribeFirebase();
+    };
   }, []);
 
   const signUp = async (email: string, password: string, fullName: string, role: 'customer' | 'food_truck_owner') => {
@@ -133,24 +168,88 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await logSecurityEvent(null, 'login', 'success', { email });
   };
 
-  const signInWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}`,
-      },
-    });
+  const signInWithGoogle = async (useFirebase = false) => {
+    setLoading(true);
+    try {
+      if (useFirebase) {
+        const { user: firebaseUser } = await firebaseGoogleSignIn();
+        if (!firebaseUser.id) throw new Error('No user ID returned from Google');
+        
+        // Create or update the user in your Supabase database
+        // First, try to get the existing profile
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', firebaseUser.id)
+          .single();
 
-    if (error) throw error;
+        // Create or update profile with all required fields
+        const profileData = {
+          id: firebaseUser.id,
+          email: firebaseUser.email || '',
+          full_name: (firebaseUser.user_metadata?.full_name || firebaseUser.email?.split('@')[0] || 'User') as string | null,
+          profile_image_url: firebaseUser.user_metadata?.avatar_url || null,
+          updated_at: new Date().toISOString(),
+          created_at: existingProfile?.created_at || new Date().toISOString(),
+          role: (existingProfile?.role || 'customer') as 'customer' | 'food_truck_owner' | 'admin',
+          is_blocked: existingProfile?.is_blocked || false,
+          user_id_number: existingProfile?.user_id_number || 0,
+          referral_code: existingProfile?.referral_code || '',
+          referred_by: existingProfile?.referred_by || null,
+          subscription_status: existingProfile?.subscription_status || 'inactive',
+          subscription_tier: existingProfile?.subscription_tier || null,
+          // Add any other required fields with default values
+          phone: existingProfile?.phone || null,
+          address: existingProfile?.address || null,
+          city: existingProfile?.city || null,
+          state: existingProfile?.state || null,
+          zip_code: existingProfile?.zip_code || null,
+          country: existingProfile?.country || null,
+        } as Profile;
+
+        const { error } = await supabase
+          .from('profiles')
+          .upsert(profileData, { onConflict: 'id' });
+
+        if (error) throw error;
+        
+        setProfile(profileData);
+      } else {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: `${window.location.origin}`,
+          },
+        });
+        if (error) throw error;
+      }
+    } catch (error) {
+      console.error('Error signing in with Google:', error);
+      setLoading(false);
+      throw error;
+    }
   };
 
-  const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    setProfile(null);
+  const signOut = async (useFirebase = false) => {
+    try {
+      if (useFirebase || isFirebaseUser) {
+        await firebaseSignOut();
+      } else {
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+      }
+      setUser(null);
+      setProfile(null);
+      setSession(null);
+      setIsFirebaseUser(false);
+    } catch (error) {
+      console.error('Error signing out:', error);
+      throw error;
+    }
   };
 
-  const value = {
+  // Create the context value with all required methods
+  const contextValue: AuthContextType = {
     user,
     profile,
     session,
@@ -161,8 +260,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut,
     refreshProfile,
   };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  
+  // Create the provider component with proper typing
+  const Provider = AuthContext.Provider as React.Provider<AuthContextType>;
+  
+  // Use React.createElement to avoid JSX type issues
+  return React.createElement(Provider, { value: contextValue }, children);
 }
 
 export function useAuth() {

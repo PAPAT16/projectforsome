@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import * as React from 'react';
 import { HelpCircle } from 'lucide-react';
 
 interface HelpBubbleProps {
@@ -7,13 +7,13 @@ interface HelpBubbleProps {
   size?: number;
 }
 
-export function HelpBubble({ content, position = 'top', size = 16 }: HelpBubbleProps) {
-  const [isVisible, setIsVisible] = useState(false);
-  const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
-  const bubbleRef = useRef<HTMLDivElement>(null);
-  const tooltipRef = useRef<HTMLDivElement>(null);
+export const HelpBubble: React.FC<HelpBubbleProps> = ({ content, position = 'top', size = 16 }) => {
+  const [isVisible, setIsVisible] = React.useState(false);
+  const [tooltipPosition, setTooltipPosition] = React.useState({ top: 0, left: 0 });
+  const bubbleRef = React.useRef<HTMLDivElement>(null);
+  const tooltipRef = React.useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (isVisible && bubbleRef.current && tooltipRef.current) {
       const bubbleRect = bubbleRef.current.getBoundingClientRect();
       const tooltipRect = tooltipRef.current.getBoundingClientRect();

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Alert } from '../ui/Alert';
@@ -50,25 +51,18 @@ export function AuthForm({ mode, onSuccess }: AuthFormProps) {
     }
   };
 
+  const { signInWithGoogle } = useAuth();
+
   const handleGoogleSignIn = async () => {
     setLoading(true);
     setMessage(null);
 
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/dashboard`,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
-          },
-        },
-      });
-
-      if (error) throw error;
+      // Use Firebase for Google auth
+      await signInWithGoogle(true);
+      onSuccess?.();
     } catch (error: any) {
-      setMessage({ type: 'error', text: error.message });
+      setMessage({ type: 'error', text: error.message || 'Failed to sign in with Google' });
       setLoading(false);
     }
   };

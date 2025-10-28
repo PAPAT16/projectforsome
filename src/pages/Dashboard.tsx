@@ -13,6 +13,13 @@ import { supabase } from '../lib/supabase';
 
 export function Dashboard() {
   const { user, profile, loading } = useAuth();
+  
+  // Debug logs
+  console.log('Dashboard rendered with:', { user, profile, loading });
+  
+  React.useEffect(() => {
+    console.log('Auth state changed:', { user, profile, loading });
+  }, [user, profile, loading]);
   const [showProfile, setShowProfile] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
