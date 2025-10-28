@@ -5,6 +5,7 @@ import { Login } from './pages/Login';
 import { Signup } from './pages/Signup';
 import { Dashboard } from './pages/Dashboard';
 import { Success } from './pages/Success';
+import { AuthCallback } from './pages/AuthCallback';
 
 // Add JSX namespace for React
 declare global {
@@ -61,6 +62,7 @@ function AppRoutes() {
         } 
       />
       <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
     </Routes>
   );
 }

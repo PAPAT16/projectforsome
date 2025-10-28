@@ -187,8 +187,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const profileData = {
           id: firebaseUser.id,
           email: firebaseUser.email || '',
-          full_name: (firebaseUser.user_metadata?.full_name || firebaseUser.email?.split('@')[0] || 'User') as string | null,
-          profile_image_url: firebaseUser.user_metadata?.avatar_url || null,
+          full_name: (firebaseUser.user_metadata?.full_name || firebaseUser.email?.split('@')[0] || 'User') as string,
+          profile_image_url: firebaseUser.user_metadata?.avatar_url || '',
           updated_at: new Date().toISOString(),
           created_at: existingProfile?.created_at || new Date().toISOString(),
           role: (existingProfile?.role || 'customer') as 'customer' | 'food_truck_owner' | 'admin',
@@ -197,14 +197,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           referral_code: existingProfile?.referral_code || '',
           referred_by: existingProfile?.referred_by || null,
           subscription_status: existingProfile?.subscription_status || 'inactive',
-          subscription_tier: existingProfile?.subscription_tier || null,
-          // Add any other required fields with default values
-          phone: existingProfile?.phone || null,
-          address: existingProfile?.address || null,
-          city: existingProfile?.city || null,
-          state: existingProfile?.state || null,
-          zip_code: existingProfile?.zip_code || null,
-          country: existingProfile?.country || null,
+          subscription_tier: existingProfile?.subscription_tier || 'free',
+          phone: existingProfile?.phone || '',
+          address: existingProfile?.address || '',
+          city: existingProfile?.city || '',
+          state: existingProfile?.state || '',
+          zip_code: existingProfile?.zip_code || '',
+          country: existingProfile?.country || '',
+          header_image_url: existingProfile?.header_image_url || '',
+          bio: existingProfile?.bio || '',
+          notification_opt_in: existingProfile?.notification_opt_in || false,
+          push_notifications_enabled: existingProfile?.push_notifications_enabled || false,
+          email_notifications_enabled: existingProfile?.email_notifications_enabled || true,
         } as Profile;
 
         const { error } = await supabase
@@ -215,13 +219,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         
         setProfile(profileData);
       } else {
-        const { error } = await supabase.auth.signInWithOAuth({
+        // Store the current URL to redirect back after OAuth
+        localStorage.setItem('preAuthRoute', window.location.pathname);
+        
+        const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            redirectTo: `${window.location.origin}`,
+            redirectTo: `${window.location.origin}/auth/callback`,
+            queryParams: {
+              access_type: 'offline',
+              prompt: 'consent',
+            },
           },
         });
+        
         if (error) throw error;
+        
+        // If we get a URL, we can redirect there for the OAuth flow
+        if (data?.url) {
+          window.location.href = data.url;
+        }
       }
     } catch (error) {
       console.error('Error signing in with Google:', error);
