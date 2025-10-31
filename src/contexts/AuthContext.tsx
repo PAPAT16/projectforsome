@@ -35,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [isFirebaseUser, setIsFirebaseUser] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
   const fetchProfile = async (userId: string) => {
     const { data, error } = await supabase
@@ -168,27 +169,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await logSecurityEvent(null, 'login', 'success', { email });
   };
 
-  const signInWithGoogle = async (useFirebase = false) => {
+  const signInWithGoogle = async (useFirebase = false): Promise<void> => {
+    if (isSigningIn) {
+      console.log('Sign in already in progress');
+      return;
+    }
+
     setLoading(true);
+    setIsSigningIn(true);
+    
     try {
       if (useFirebase) {
+        // Handle Firebase Google Sign-in
         const { user: firebaseUser } = await firebaseGoogleSignIn();
-        if (!firebaseUser.id) throw new Error('No user ID returned from Google');
+        if (!firebaseUser.uid) throw new Error('No user ID returned from Google');
         
         // Create or update the user in your Supabase database
-        // First, try to get the existing profile
         const { data: existingProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', firebaseUser.id)
+          .eq('id', firebaseUser.uid)
           .single();
 
         // Create or update profile with all required fields
         const profileData = {
-          id: firebaseUser.id,
+          id: firebaseUser.uid,
           email: firebaseUser.email || '',
-          full_name: (firebaseUser.user_metadata?.full_name || firebaseUser.email?.split('@')[0] || 'User') as string,
-          profile_image_url: firebaseUser.user_metadata?.avatar_url || '',
+          full_name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+          profile_image_url: firebaseUser.photoURL || '',
           updated_at: new Date().toISOString(),
           created_at: existingProfile?.created_at || new Date().toISOString(),
           role: (existingProfile?.role || 'customer') as 'customer' | 'food_truck_owner' | 'admin',
@@ -211,57 +219,80 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email_notifications_enabled: existingProfile?.email_notifications_enabled || true,
         } as Profile;
 
-        const { error } = await supabase
+        const { error: upsertError } = await supabase
           .from('profiles')
           .upsert(profileData, { onConflict: 'id' });
 
-        if (error) throw error;
+        if (upsertError) throw upsertError;
         
         setProfile(profileData);
       } else {
-        // Store the current URL to redirect back after OAuth
-        localStorage.setItem('preAuthRoute', window.location.pathname);
-        
+        // Handle Supabase OAuth
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            redirectTo: `${window.location.origin}/auth/callback`,
+            redirectTo: `${window.location.origin}/dashboard`,
             queryParams: {
-              access_type: 'offline',
-              prompt: 'consent',
+              prompt: 'select_account',
             },
           },
         });
         
-        if (error) throw error;
+        if (error) {
+          console.error('Error in signInWithGoogle:', error);
+          throw error;
+        }
         
-        // If we get a URL, we can redirect there for the OAuth flow
+        // If we get a URL, redirect for OAuth flow
         if (data?.url) {
           window.location.href = data.url;
         }
       }
-    } catch (error) {
-      console.error('Error signing in with Google:', error);
-      setLoading(false);
+    } catch (error: any) {
+      if (error.code === 'auth/cancelled-popup-request') {
+        console.log('Sign in popup was cancelled by user');
+        return;
+      }
+      console.error('Error in signInWithGoogle:', error);
       throw error;
+    } finally {
+      setLoading(false);
+      setIsSigningIn(false);
     }
   };
 
-  const signOut = async (useFirebase = false) => {
+  const signOut = async (useFirebase = false): Promise<void> => {
     try {
-      if (useFirebase || isFirebaseUser) {
-        await firebaseSignOut();
+      setLoading(true);
+      
+      if (useFirebase) {
+        try {
+          await firebaseSignOut();
+        } catch (error) {
+          console.error('Error signing out from Firebase:', error);
+          throw error;
+        }
       } else {
-        const { error } = await supabase.auth.signOut();
-        if (error) throw error;
+        try {
+          await supabase.auth.signOut();
+        } catch (error) {
+          console.error('Error signing out from Supabase:', error);
+          throw error;
+        }
       }
+      
+      // Clear user data
       setUser(null);
       setProfile(null);
       setSession(null);
-      setIsFirebaseUser(false);
+      setIsSigningIn(false);
+      console.log('User signed out successfully');
+      
     } catch (error) {
-      console.error('Error signing out:', error);
+      console.error('Error during sign out:', error);
       throw error;
+    } finally {
+      setLoading(false);
     }
   };
 

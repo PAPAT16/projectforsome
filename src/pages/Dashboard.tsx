@@ -35,8 +35,15 @@ export function Dashboard() {
     );
   }
 
+  const { signOut } = useAuth();
+
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    try {
+      await signOut();
+      // The AuthProvider will handle the state updates
+    } catch (error) {
+      console.error('Error signing out:', error);
+    }
   };
 
   const renderDashboard = () => {
@@ -96,7 +103,10 @@ export function Dashboard() {
                     )}
                   </button>
                   <button
-                    onClick={handleSignOut}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleSignOut();
+                    }}
                     className="bg-white bg-opacity-20 hover:bg-opacity-30 p-2 rounded-lg transition-colors flex items-center gap-2"
                   >
                     <LogOut size={20} />
